@@ -1,0 +1,9 @@
+.env
+tenants.json
+__pycache__/
+*.pyc
+*.egg-info/
+.git/
+.gitignore
+docker-compose.yml
+*.example.*
