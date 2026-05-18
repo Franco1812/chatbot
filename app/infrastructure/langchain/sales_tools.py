@@ -5,107 +5,71 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-# Inventario simulado (sustituir por API real en otro adaptador)
-_MOCK_STOCK: dict[str, int] = {
-    "SKU-001": 120,
-    "SKU-002": 0,
-    "SKU-DEMO": 50,
-}
+from app.domain.entities.tenant import CatalogItem
 
 
 class ConsultarStockInput(BaseModel):
-    """Argumentos validados con Pydantic v2 para la herramienta consultar_stock."""
-
-    sku: str = Field(
-        ...,
-        min_length=1,
-        max_length=64,
-        description="Identificador del producto en almacén (ej. SKU-001).",
-    )
-    cantidad_solicitada: int = Field(
-        default=1,
-        ge=1,
-        le=10_000,
-        description="Unidades que el cliente desea comprar.",
-    )
+    sku: str = Field(..., min_length=1, max_length=64, description="Identificador del producto (ej. SKU-001).")
+    cantidad_solicitada: int = Field(default=1, ge=1, le=10_000, description="Unidades que el cliente desea comprar.")
 
 
 class CrearOrdenPagoInput(BaseModel):
-    """Argumentos validados con Pydantic v2 para la herramienta crear_orden_pago."""
-
     sku: str = Field(..., min_length=1, max_length=64, description="SKU incluido en la orden.")
     cantidad: int = Field(..., ge=1, le=10_000, description="Unidades a cobrar.")
-    metodo_pago: str = Field(
-        ...,
-        min_length=2,
-        max_length=32,
-        description="Método de pago acordado (ej. tarjeta, transferencia, bizum).",
-    )
-    email_cliente: str | None = Field(
-        default=None,
-        max_length=254,
-        description="Email del cliente para el comprobante (opcional).",
-    )
+    metodo_pago: str = Field(..., min_length=2, max_length=32, description="Método de pago acordado.")
+    email_cliente: str | None = Field(default=None, max_length=254, description="Email del cliente (opcional).")
 
 
-def _consultar_stock(sku: str, cantidad_solicitada: int) -> str:
-    sku_key = sku.strip().upper()
-    disponibles = _MOCK_STOCK.get(sku_key)
-    if disponibles is None:
-        payload: dict[str, Any] = {
-            "sku": sku_key,
-            "encontrado": False,
-            "mensaje": "SKU no catalogado. Pregunta al cliente por otro código o ofrece alternativas.",
-        }
-    else:
-        suficiente = disponibles >= cantidad_solicitada
-        payload = {
-            "sku": sku_key,
-            "encontrado": True,
-            "unidades_disponibles": disponibles,
-            "cantidad_solicitada": cantidad_solicitada,
-            "puede_servir": suficiente,
-            "mensaje": "Stock suficiente." if suficiente else "Stock insuficiente; propón cantidad menor o reserva.",
-        }
-    return json.dumps(payload, ensure_ascii=False)
+def build_sales_tools(catalog: dict[str, CatalogItem]) -> list[StructuredTool]:
+    def _consultar_stock(sku: str, cantidad_solicitada: int) -> str:
+        sku_key = sku.strip().upper()
+        item = catalog.get(sku_key)
+        if item is None:
+            payload: dict[str, Any] = {
+                "sku": sku_key,
+                "encontrado": False,
+                "mensaje": "SKU no catalogado. Pregunta al cliente por otro código o ofrece alternativas.",
+            }
+        else:
+            suficiente = item.stock >= cantidad_solicitada
+            payload = {
+                "sku": sku_key,
+                "encontrado": True,
+                "nombre": item.name,
+                "unidades_disponibles": item.stock,
+                "cantidad_solicitada": cantidad_solicitada,
+                "puede_servir": suficiente,
+                "mensaje": "Stock suficiente." if suficiente else "Stock insuficiente; propón cantidad menor o reserva.",
+            }
+        return json.dumps(payload, ensure_ascii=False)
 
-
-def _crear_orden_pago(sku: str, cantidad: int, metodo_pago: str, email_cliente: str | None) -> str:
-    sku_key = sku.strip().upper()
-    disponibles = _MOCK_STOCK.get(sku_key)
-    if disponibles is None:
+    def _crear_orden_pago(sku: str, cantidad: int, metodo_pago: str, email_cliente: str | None) -> str:
+        sku_key = sku.strip().upper()
+        item = catalog.get(sku_key)
+        if item is None:
+            return json.dumps(
+                {"ok": False, "error": "SKU desconocido; usa consultar_stock antes de crear la orden."},
+                ensure_ascii=False,
+            )
+        if item.stock < cantidad:
+            return json.dumps(
+                {"ok": False, "error": "No hay stock suficiente.", "unidades_disponibles": item.stock},
+                ensure_ascii=False,
+            )
         return json.dumps(
             {
-                "ok": False,
-                "error": "SKU desconocido; usa consultar_stock antes de crear la orden.",
+                "ok": True,
+                "orden_id": str(uuid.uuid4()),
+                "sku": sku_key,
+                "nombre": item.name,
+                "cantidad": cantidad,
+                "metodo_pago": metodo_pago,
+                "email_cliente": email_cliente,
+                "mensaje": "Orden registrada; confirma al cliente total y plazo de entrega.",
             },
             ensure_ascii=False,
         )
-    if disponibles < cantidad:
-        return json.dumps(
-            {
-                "ok": False,
-                "error": "No hay stock suficiente para esta cantidad.",
-                "unidades_disponibles": disponibles,
-            },
-            ensure_ascii=False,
-        )
-    orden_id = str(uuid.uuid4())
-    return json.dumps(
-        {
-            "ok": True,
-            "orden_id": orden_id,
-            "sku": sku_key,
-            "cantidad": cantidad,
-            "metodo_pago": metodo_pago,
-            "email_cliente": email_cliente,
-            "mensaje": "Orden registrada; confirma al cliente total y plazo de entrega.",
-        },
-        ensure_ascii=False,
-    )
 
-
-def build_sales_tools() -> list[StructuredTool]:
     return [
         StructuredTool.from_function(
             name="consultar_stock",

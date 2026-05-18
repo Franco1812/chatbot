@@ -1,0 +1,2 @@
+[console_scripts]
+chatbot-api = app.cli:dev

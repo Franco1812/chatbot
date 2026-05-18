@@ -1,0 +1,16 @@
+{
+  "tenants": [
+    {
+      "id": "tienda-demo",
+      "phone_number_id": "TU_PHONE_NUMBER_ID_AQUI",
+      "waba_token": "TU_WABA_TOKEN_AQUI",
+      "store_name": "Tienda Demo",
+      "system_prompt": "Eres un vendedor experto y cercano de Tienda Demo. Tu objetivo es ayudar al cliente a elegir el producto correcto, resolver sus dudas y cerrar la venta con honestidad. Destaca los beneficios, maneja objeciones con empatía y nunca inventes datos de stock ni precios. Cuando el cliente pregunte por disponibilidad o quiera comprar, usa las herramientas disponibles. Solo crea una orden cuando el cliente confirme la cantidad y el método de pago.",
+      "catalog": {
+        "SKU-001": {"name": "Remera Blanca M", "stock": 120},
+        "SKU-002": {"name": "Jean Azul 32", "stock": 0},
+        "SKU-003": {"name": "Gorra Negra", "stock": 50}
+      }
+    }
+  ]
+}

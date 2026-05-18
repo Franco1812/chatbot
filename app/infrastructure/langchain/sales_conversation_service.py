@@ -6,47 +6,35 @@ from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 
 from app.domain.entities.chat_turn import ChatTurn
+from app.domain.entities.tenant import CatalogItem
 from app.domain.ports.conversation import SalesConversationPort
 
 logger = logging.getLogger(__name__)
 
-SALES_SYSTEM_PROMPT = """Eres un vendedor experto, cercano y persuasivo en español.
-Tu objetivo es ayudar al cliente a elegir producto, resolver dudas y cerrar la venta con honestidad.
-Destaca beneficios, maneja objeciones con empatía y nunca inventes datos de inventario ni precios finales:
-cuando necesites datos reales de existencias u órdenes, usa las herramientas disponibles.
-Si el cliente no ha dado SKU, pídelo o propón opciones concretas antes de consultar stock.
-Solo crea una orden de pago cuando el cliente haya confirmado cantidad y método de pago (o esté claro en el mensaje)."""
-
 
 class LangChainSalesConversationService(SalesConversationPort):
-    """
-    Servicio de conversación: ChatOpenAI (gpt-4o) con tool-calling.
-    El modelo decide cuándo invocar herramientas según el input del usuario.
-    """
-
     def __init__(
         self,
         *,
         api_key: str,
+        system_prompt: str,
+        catalog: dict[str, CatalogItem],
         model: str = "gpt-4o",
         temperature: float = 0.7,
         tool_executor: Callable[[BaseTool, dict], str] | None = None,
     ) -> None:
-        self._llm = ChatOpenAI(
-            model=model,
-            api_key=api_key,
-            temperature=temperature,
-        )
-        self._tools = self._build_tools()
+        self._system_prompt = system_prompt
+        self._llm = ChatOpenAI(model=model, api_key=api_key, temperature=temperature)
+        self._tools = self._build_tools(catalog)
         self._tool_by_name = {t.name: t for t in self._tools}
         self._llm_with_tools = self._llm.bind_tools(self._tools)
         self._tool_executor = tool_executor or self._default_tool_invoke
         self._max_tool_rounds = 8
 
-    def _build_tools(self) -> list[BaseTool]:
+    @staticmethod
+    def _build_tools(catalog: dict[str, CatalogItem]) -> list[BaseTool]:
         from app.infrastructure.langchain.sales_tools import build_sales_tools
-
-        return build_sales_tools()
+        return build_sales_tools(catalog)
 
     @staticmethod
     def _default_tool_invoke(tool: BaseTool, args: dict) -> str:
@@ -63,7 +51,7 @@ class LangChainSalesConversationService(SalesConversationPort):
         return out
 
     async def complete(self, turns: list[ChatTurn]) -> str:
-        llm_messages: list[BaseMessage] = [SystemMessage(content=SALES_SYSTEM_PROMPT)]
+        llm_messages: list[BaseMessage] = [SystemMessage(content=self._system_prompt)]
         llm_messages.extend(self._turns_to_lc_messages(turns))
 
         for _ in range(self._max_tool_rounds):
@@ -85,9 +73,7 @@ class LangChainSalesConversationService(SalesConversationPort):
                 if tool is None:
                     logger.warning("Tool desconocida solicitada por el modelo: %s", name)
                     payload = f'{{"error": "herramienta desconocida: {name}"}}'
-                    llm_messages.append(
-                        ToolMessage(content=payload, tool_call_id=tool_call_id, name=name)
-                    )
+                    llm_messages.append(ToolMessage(content=payload, tool_call_id=tool_call_id, name=name))
                     continue
                 try:
                     result = self._tool_executor(tool, args)
